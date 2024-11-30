@@ -1,0 +1,9 @@
+version: "3.9"
+services:
+  homework-01:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./log:/app/log
+      - ./reports:/app/reports
