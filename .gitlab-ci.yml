@@ -1,0 +1,25 @@
+stages:
+    - lint
+    - test
+
+lint:
+    image: python:3.12-slim
+    stage: lint
+    environment: testing
+    tags:
+        - docker
+    before_script:
+        - pip install poetry==1.8.3 && poetry install
+    script:
+        - poetry run pre-commit run --all-files
+
+test:
+    image: python:3.12-slim
+    stage: test
+    environment: testing
+    tags:
+        - docker
+    before_script:
+        - pip install poetry==1.8.3 && poetry install
+    script:
+        - poetry run pytest ./tests --cov=homework_01 --cov-report term-missing
