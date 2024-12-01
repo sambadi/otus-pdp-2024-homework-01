@@ -1,0 +1,20 @@
+name: CI
+on: [push, pull_request]
+
+jobs:
+  ruff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/ruff-action@v1
+      - name: install poetry
+        uses: abatilo/actions-poetry@v2.0.0
+        with:
+          poetry-version: 1.8.3
+      - name: Install the project dependencies
+        run: poetry install
+      - name: Run the automated tests
+        run: poetry run pytest ./tests --cov=homework_01 --cov-report term-missing
