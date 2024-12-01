@@ -1,3 +1,4 @@
+import os
 from datetime import date
 from pathlib import Path
 from unittest.mock import patch
@@ -32,13 +33,14 @@ def test_get_latest_log_info():
                     return_value=[
                         "test.log-20240104",
                         "test.log-20240904.gz",
+                        "test.log-20240905.bz2",
                         "test.log-20240804",
                     ],
                 ):
-                    res = _get_latest_log_info("test_path", "test.log")
+                    res = _get_latest_log_info("test_path", r"test.log-\d{8}(\.gz)*$")
                     assert res == LogInfo(
                         filename="test.log-20240904.gz",
-                        full_path="test_path\\test.log-20240904.gz",
+                        full_path=os.path.join("test_path", "test.log-20240904.gz"),
                         hash="e10adc3949ba59abbe56e057f20f883e",
                         log_date=date(2024, 9, 4),
                         is_gzipped=True,

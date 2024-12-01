@@ -159,7 +159,10 @@ def _prepare_report_data(
         f"{req_total_count} requests processed. {row_process_error_cnt} errors."
     )
 
-    if (
+    if not stats_map:
+        return None
+
+    if req_total_count > 0 and (
         0
         < parce_error_threshold_percent
         <= (row_process_error_cnt / req_total_count * 100)
@@ -167,9 +170,6 @@ def _prepare_report_data(
         raise ValueError(
             f"Too many errors (more than {parce_error_threshold_percent}%). Please check log file."
         )
-
-    if not stats_map:
-        return None
 
     return [
         {

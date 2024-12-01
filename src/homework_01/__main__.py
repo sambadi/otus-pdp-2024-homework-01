@@ -16,7 +16,7 @@ _default_config = {
     "REPORT_SIZE": 1000,
     "REPORT_DIR": "./reports",
     "LOG_DIR": "./log",
-    "LOG_FILE_NAME_PATTERN": r"nginx-access-ui.log-\d{8}(\.gz)*",
+    "LOG_FILE_NAME_PATTERN": r"nginx-access-ui.log-\d{8}(\.gz)*$",
     "LOG_ROW_PATTERN": (
         r"^(?P<remote_addr>[^\s]*)\s+(?P<remote_user>[^\s]*)\s+(?P<http_x_real_ip>[^\s]*)\s+\[(?P<time_local>.*)\]\s+"
         r"\"(?P<request_method>[^\s]*)\s+(?P<request_path>[^\s]*)\s+(?P<request_http_version>[^\s]*)\"\s+"
