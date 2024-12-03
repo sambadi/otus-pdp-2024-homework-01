@@ -117,6 +117,9 @@ if __name__ == "__main__":
             sys.exit(f"Could not parse config file {args.config}")
 
         prepare_report_based_on_latest_log_file(config)
+    except KeyboardInterrupt:
+        logger.exception("Program interrupted by user. Exiting!")
+        sys.exit()
     except BaseException as e:
         logger.exception(f"Unexpected error: {e}")
         sys.exit()

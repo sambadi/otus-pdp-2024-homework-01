@@ -11,12 +11,30 @@ from collections import namedtuple
 
 import re
 from typing import Generator, Literal, Any
+from dataclasses import field, dataclass
 
 logger = structlog.get_logger()
 
 LogInfo = namedtuple(
     "LogInfo", ["filename", "full_path", "hash", "log_date", "is_gzipped"]
 )
+
+
+@dataclass
+class ParsingResult:
+    row_process_error_cnt: int = field(default=0)
+    req_total_count: int = field(default=0)
+    req_total_time: float = field(default=0.0)
+    stats: list[dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def error_percent(self) -> float:
+        return self.row_process_error_cnt / self.req_total_count * 100
+
+    @property
+    def has_data_to_render(self) -> bool:
+        return self.stats is not None and len(self.stats) > 0
+
 
 BASE_ENCODING = "utf-8"
 
@@ -88,52 +106,52 @@ def _read_log_file(
     if not os.path.exists(log_info.full_path):
         return None
 
-    if log_info.is_gzipped:
-        stream_type = gzip.open  # type: ignore
-    else:
-        stream_type = open  # type: ignore
+    stream_type = gzip.open if log_info.is_gzipped else open
     row_pattern_cmp = re.compile(row_pattern)
-    with stream_type(log_info.full_path, "rt", encoding=BASE_ENCODING) as log_stream:
-        for row in log_stream:
-            matches = row_pattern_cmp.match(row)
-            if matches is not None:
-                yield matches.groupdict()
-            else:
-                yield False
+    try:
+        with stream_type(
+            log_info.full_path, "rt", encoding=BASE_ENCODING
+        ) as log_stream:
+            for row in log_stream:
+                matches = row_pattern_cmp.match(row)
+                if matches is not None:
+                    yield matches.groupdict()
+                else:
+                    yield False
+    except UnicodeDecodeError:
+        logger.error("File %s is not %s encoded", log_info.full_path, BASE_ENCODING)
+        return None
+    except OSError as e:
+        logger.error("Error opening %s. Error: %s", log_info.full_path, e)
+        return None
 
 
-def _prepare_report_data(
+def _parse_log_file(
     log: Generator[dict[str, str] | Literal[False], None, None],
-    report_size: int,
-    parce_error_threshold_percent: int = -1,
-) -> list[dict] | None:
+) -> ParsingResult:
     """
-    Prepare the report.
-    :param log: generator that yields each row of the log file
-    :param out_dir:  output directory of the report
-    :param report_size:  maximum count of requests to be rendered in the report
-    :return:  list of dicts that represent the report rows
+    Parse the given log file.
+    :param log: log file generator
+    :return: parsed log data
     """
     logger.info("Start log file processing...")
 
-    row_process_error_cnt = 0
-    req_total_count = 0
-    req_total_time = 0.0
+    result = ParsingResult()
     stats_map: dict[str, dict[str, Any]] = {}
 
     for row in log:
-        req_total_count += 1
+        result.req_total_count += 1
 
-        if req_total_count % 100 == 0:
-            logger.debug("Parsed %d requests...", req_total_count)
+        if result.req_total_count % 100 == 0:
+            logger.debug("Parsed %d requests...", result.req_total_count)
 
         if row is False:
-            row_process_error_cnt += 1
+            result.row_process_error_cnt += 1
             continue
 
         request_path = row["request_path"]
         request_time = float(row["request_time"])
-        req_total_time += request_time
+        result.req_total_time += request_time
 
         request_stat = stats_map.setdefault(
             request_path,
@@ -152,37 +170,49 @@ def _prepare_report_data(
             request_stat["time_max"] = request_time
         request_stat["count"] += 1
 
-    stats = sorted(stats_map.values(), key=lambda x: x["time_max"], reverse=True)
-    report_size = min(report_size, len(stats))
-
     logger.info(
-        f"{req_total_count} requests processed. {row_process_error_cnt} errors."
+        f"{result.req_total_count} requests processed. {result.row_process_error_cnt} errors."
     )
 
     if not stats_map:
-        return None
+        return result
 
-    if req_total_count > 0 and (
-        0
-        < parce_error_threshold_percent
-        <= (row_process_error_cnt / req_total_count * 100)
+    result.stats = sorted(stats_map.values(), key=lambda x: x["time_max"], reverse=True)
+
+    return result
+
+
+def _prepare_report_data(
+    parsed_log: ParsingResult,
+    report_size: int,
+    parse_error_threshold_percent: int = -1,
+) -> list[dict]:
+    """
+    Prepare the report.
+    :param parsed_log: result of parsing the log file
+    :param report_size:  maximum count of requests to be rendered in the report
+    :param parse_error_threshold_percent:  maximum percentage of requests that can be parsed with errors
+    :return:  list of dicts that represent the report rows
+    """
+    if parsed_log.req_total_count > 0 and (
+        0 < parse_error_threshold_percent <= parsed_log.error_percent
     ):
         raise ValueError(
-            f"Too many errors (more than {parce_error_threshold_percent}%). Please check log file."
+            f"Too many errors (more than {parse_error_threshold_percent}%). Please check log file."
         )
 
     return [
         {
             "url": row["path"],
             "count": row["count"],
-            "count_perc": round(row["count"] / req_total_count * 100, 5),
+            "count_perc": round(row["count"] / parsed_log.req_total_count * 100, 5),
             "time_sum": round(row["time_sum"], 5),
             "time_max": row["time_max"],
-            "time_perc": round(row["time_sum"] / req_total_time * 100, 5),
+            "time_perc": round(row["time_sum"] / parsed_log.req_total_time * 100, 5),
             "time_avg": round(row["time_sum"] / row["count"], 5),
             "time_med": median(row["request_times"]),
         }
-        for row in stats[:report_size]
+        for row in parsed_log.stats[:report_size]
     ]
 
 
@@ -262,17 +292,25 @@ def prepare_report_based_on_latest_log_file(config: dict):
         logger.info(f"File {log_file_info.full_path} is already parsed!")
         return
 
-    report_data = _prepare_report_data(
+    parsed_log = _parse_log_file(
         log=_read_log_file(
             log_info=log_file_info, row_pattern=config["LOG_ROW_PATTERN"]
         ),
+    )
+
+    if not parsed_log.has_data_to_render:
+        logger.info("Parsed log file has no data!")
+        return
+
+    report_data = _prepare_report_data(
+        parsed_log=parsed_log,
         report_size=config["REPORT_SIZE"],
-        parce_error_threshold_percent=int(
+        parse_error_threshold_percent=int(
             config.get("PARSE_ERROR_THRESHOLD_PERCENT", -1)
         ),
     )
 
-    if not report_data:
+    if not parsed_log.has_data_to_render:
         logger.info("No data to render!")
         return
 
